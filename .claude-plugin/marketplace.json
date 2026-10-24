@@ -1,0 +1,12 @@
+{
+  "name": "nvim-inline-review",
+  "owner": {
+    "name": "Rohit Rao"
+  },
+  "plugins": [
+    {
+      "name": "nvim-inline-review",
+      "source": "./claude-mod"
+    }
+  ]
+}

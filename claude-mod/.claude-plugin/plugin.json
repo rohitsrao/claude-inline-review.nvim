@@ -1,0 +1,10 @@
+{
+  "name": "nvim-inline-review",
+  "version": "0.1.0",
+  "description": "Snapshots each file before Claude's first Edit/Write/NotebookEdit so claude-inline-review.nvim can review the changes hunk by hunk.",
+  "author": {
+    "name": "Rohit Rao"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/rohitsrao/claude-inline-review.nvim"
+}
