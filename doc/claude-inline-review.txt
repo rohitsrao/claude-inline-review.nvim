@@ -1,0 +1,59 @@
+*claude-inline-review.txt*  Review Claude Code's file edits hunk by hunk
+
+==============================================================================
+CONTENTS                                         *claude-inline-review*
+
+Claude Code's companion mod (nvim-inline-review) snapshots each file before
+Claude's first Edit/Write/NotebookEdit of it. This plugin diffs that snapshot
+against your buffer: new lines green, old lines red above them.
+
+SETUP                                            *claude-inline-review-setup*
+>lua
+    require("claude-inline-review").setup({})
+<
+Install the Claude Code mod with |:ClaudeInlineReview| install-mod, then
+check with `:checkhealth claude-inline-review`.
+
+Options (defaults shown; any key set to false is left unmapped): >lua
+    require("claude-inline-review").setup({
+      keymaps = {
+        start = "<leader>rr", next_hunk = "]h", prev_hunk = "[h",
+        accept = "<leader>ra", reject = "<leader>rx",
+        accept_file = "<leader>rA", reject_file = "<leader>rX",
+        list = "<leader>rl", quit = "<leader>rq",
+      },
+      debounce_ms = { record = 200, reflog = 300, render = 150 },
+      sign = "▶",
+    })
+<
+COMMANDS                                         *:ClaudeInlineReview*
+
+:ClaudeInlineReview [start]     Start or resume the review.
+:ClaudeInlineReview stop        End the review; accepts are kept.
+:ClaudeInlineReview list        All remaining hunks in the quickfix list.
+:ClaudeInlineReview refresh     Re-read the record and check for commits.
+:ClaudeInlineReview recover {path} {sha}
+                                Use a snapshot SHA printed when the mod stopped
+                                Claude as {path}'s baseline.
+:ClaudeInlineReview install-mod Install the Claude Code mod.
+
+REVIEWING                                        *claude-inline-review-keys*
+
+Accept keeps Claude's lines and moves the snapshot forward; nothing is staged.
+Reject restores the old lines and saves the file; |u| undoes it. A file Claude
+created that a reject leaves empty is deleted; its buffer stays open, so |u|
+then |:w| brings it back.
+
+The record in .git/claude-inline-review/ is deleted when no hunks are left,
+when a commit contains everything Claude changed, or when every file in it was
+first touched in a turn you aborted with Esc.
+
+HIGHLIGHTS                                       *claude-inline-review-highlights*
+
+ClaudeInlineReviewAdd           New lines (links to DiffAdd)
+ClaudeInlineReviewDelete        Old lines (links to DiffDelete)
+ClaudeInlineReviewAddCurrent    New lines of the current hunk (DiffText)
+ClaudeInlineReviewDeleteCurrent Old lines of the current hunk (DiffDelete)
+ClaudeInlineReviewSign          Current-hunk sign, nvim-tree counts
+
+ vim:tw=78:ts=8:ft=help:norl:

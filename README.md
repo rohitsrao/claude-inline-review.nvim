@@ -1,40 +1,94 @@
 # claude-inline-review.nvim
 
-Review the file edits Claude Code makes, hunk by hunk, inside your real Neovim buffers. New lines are painted green and old lines red, and you accept or reject each hunk. Nothing is staged or committed for you.
+Review the file edits Claude Code makes, hunk by hunk, in your real Neovim buffers. Claude's new lines are painted green, the old lines show in red above them, and you accept or reject each hunk. Nothing is staged or committed for you. LSP, treesitter and gitsigns keep working underneath.
 
-The repo has two halves:
+The repo has two halves, installed separately:
 
-- **A Claude Code mod** (`claude-mod/`, installed as `nvim-inline-review`). Just before Claude's first `Edit`, `Write` or `NotebookEdit` of a file, it stores a snapshot of that file in git's object store with `git hash-object -w`. It records which files changed in `.git/claude-inline-review/session.json`. The mod passes every tool call through unchanged. It stops Claude only when it can't record a change.
-- **A Neovim plugin** (repo root), which diffs each snapshot against your buffer and runs the review. *Work in progress.*
+- **A Claude Code mod** (`claude-mod/`, named `nvim-inline-review`). Just before Claude's first `Edit`, `Write` or `NotebookEdit` of a file, it stores a snapshot of the file in git's object store (`git hash-object -w`: no commit, no staging). It records the changed files in `.git/claude-inline-review/session.json`. It passes every tool call through unchanged, and stops Claude only when it can't record a change.
+- **A Neovim plugin** (this repo's root). It diffs each snapshot against your buffer, runs the review, and cleans up once you finish or commit.
 
-Changes Claude makes through `Bash` (`sed -i`, formatters, codegen) are not reviewed.
+## Requirements
 
-## Status
+Neovim ≥ 0.11, git, and Claude Code with mods (2.1.310 or later).
 
-The mod (Milestones 1–2) works. The Neovim plugin is not built yet.
+## Setup
 
-## Install the Claude Code mod
+**1. Install the Neovim plugin.**
 
-At the Claude Code prompt:
+```lua
+vim.pack.add({ "https://github.com/rohitsrao/claude-inline-review.nvim" })
+require("claude-inline-review").setup({})
+```
+
+lazy.nvim: `{ "rohitsrao/claude-inline-review.nvim", opts = {} }`
+
+**2. Install the Claude Code mod** from the same repo. Either run `:ClaudeInlineReview install-mod`, or at the Claude prompt:
 
 ```
 /plugin install nvim-inline-review --marketplace rohitsrao/claude-inline-review.nvim
 ```
 
-Answer `y` to add the marketplace, then pick a scope. From a shell:
+Answer `y` to add the marketplace, then pick a scope. From a shell: `claude plugin install nvim-inline-review --marketplace rohitsrao/claude-inline-review.nvim`.
 
-```
-claude plugin install nvim-inline-review --marketplace rohitsrao/claude-inline-review.nvim
+**3. Stop Claude Code from opening a diff and asking before every edit.** At the Claude prompt: `/config diffTool=terminal`. Then use `acceptEdits` mode, with `Shift+Tab` or `"permissions": { "defaultMode": "acceptEdits" }` in `~/.claude/settings.json`.
+
+**4. (Optional) nvim-tree marker.** Add the decorator to `renderer.decorators`:
+
+```lua
+renderer = {
+  decorators = { "Git", "Open", "Hidden", "Modified", "Bookmark", "Diagnostics", "Copied", "Cut",
+    require("claude-inline-review.nvim-tree").decorator },
+},
 ```
 
-To try it from a local checkout: `claude --plugin-dir ./claude-mod`.
+**5. (Optional) `.claudereviewignore`** at the repo root, in `.gitignore` syntax, for files you never want to review (for example `*.g.dart` or `pubspec.lock`).
+
+**6. Check:** `:checkhealth claude-inline-review`.
+
+## Using it
+
+When Claude's turn ends, you get a notification: `Claude changed 4 files (11 hunks) — <leader>rr to review`.
+
+| Key | Action |
+|---|---|
+| `<leader>rr` | start / resume the review |
+| `]h` / `[h` | next / previous hunk (crosses files) |
+| `<leader>ra` / `<leader>rx` | accept / reject the hunk under the cursor, then move on |
+| `<leader>rA` / `<leader>rX` | accept / reject the whole file |
+| `<leader>rl` | all remaining hunks in quickfix |
+| `<leader>rq` | end the review (keeps progress) |
+
+- **Accept** keeps Claude's code as ordinary code you can keep editing. Your own later edits to it show up as new hunks.
+- **Reject** puts the old lines back and saves the file. Plain `u` undoes a reject, and a whole-file reject is one undo step.
+- **The empty-file rule:** if rejecting leaves a file that Claude created empty, the file is deleted. Its buffer stays open, so `u` then `:w` brings it back.
+- **The review follows your cursor.** Opening a file from nvim-tree, Telescope or `:bnext` continues the review there.
+
+The record is deleted when:
+
+- **you finish the review** (no hunks left).
+- **you commit** everything Claude changed. Neovim watches `.git/logs/HEAD`. A partial commit leaves only the uncommitted hunks.
+- **you press Esc** on a turn. The files Claude first touched in that turn are dropped from the review, and the rest stay.
+
+## Commands
+
+`:ClaudeInlineReview [start|stop|list|refresh|recover <path> <sha>|install-mod]`
+
+## Known limits
+
+- Changes made through `Bash` (`sed -i`, formatters, codegen) are not reviewed. They still show in `git diff` and gitsigns.
+- The plugin is off outside git repos.
+- If Esc aborts a turn that touched a file Claude had also changed in an earlier turn, that file keeps the aborted turn's changes in its review.
+- Binary files are left out of the review. Notebook (`.ipynb`) hunks are JSON lines.
 
 ## Development
 
 ```
 claude plugin validate ./claude-mod
 claude plugin test ./claude-mod
+nvim --headless --noplugin -u tests/minimal_init.lua -c "PlenaryBustedDirectory tests { minimal_init = 'tests/minimal_init.lua', sequential = true }"
 ```
+
+The tests need [plenary.nvim](https://github.com/nvim-lua/plenary.nvim); set `PLENARY=/path/to/plenary.nvim` if it isn't installed with `vim.pack`.
 
 ## License
 
