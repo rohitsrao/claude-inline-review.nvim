@@ -6,7 +6,8 @@ CONTENTS                                         *claude-inline-review*
 Claude Code's companion mod (nvim-inline-review) snapshots each file before
 Claude's first Edit/Write/NotebookEdit of it, and records the new files
 Claude creates through Bash (generated files, lockfiles and gitignored files
-left out). This plugin diffs that snapshot against your buffer: new lines
+left out), plus the tracked files an inline Python heredoc script
+(`python3 - <<'EOF'`) changes. This plugin diffs that snapshot against your buffer: new lines
 green, old lines red above them.
 
 SETUP                                            *claude-inline-review-setup*

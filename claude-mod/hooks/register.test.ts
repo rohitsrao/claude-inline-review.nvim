@@ -16,7 +16,9 @@ type World = {
   scripts: Map<string, Record<string, string>>
 }
 
-const TRACKED = new Set(['a.txt', 'b.txt'])
+// The tracked files as staged: a working copy that differs is modified.
+const INDEX = new Map([['a.txt', 'one\n'], ['b.txt', 'two\n']])
+const TRACKED = new Set(INDEX.keys())
 
 // The engine beneath the mod: an in-memory file system and just enough git.
 function world(on: On): World {
@@ -70,12 +72,17 @@ function world(on: On): World {
     }
     if (!w.isGitRepo) return { value: { ...fail('fatal: not a git repository').value, exitCode: 128 } }
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return ok(`${TOP}\n${GIT_DIR}\n`)
+    if (args[0] === 'rev-parse' && args[1]?.startsWith(':')) return ok(`sha-${INDEX.get(args[1].slice(1))!.trim()}\n`)
     if (args[0] === 'rev-parse') return ok('headsha\n')
     if (args[0] === 'ls-files') {
       const listed = [...w.files.keys()]
         .filter(path => path.startsWith(`${TOP}/`) && !path.startsWith(`${GIT_DIR}/`))
         .map(path => path.slice(TOP.length + 1))
         .filter(rel => !TRACKED.has(rel) && !w.gitignored.has(rel))
+      return ok(listed.map(rel => `${rel}\0`).join(''))
+    }
+    if (args[0] === 'diff') {
+      const listed = [...INDEX].filter(([rel, text]) => w.files.get(`${TOP}/${rel}`) !== text).map(([rel]) => rel)
       return ok(listed.map(rel => `${rel}\0`).join(''))
     }
     if (args[0] === 'hash-object') {
@@ -375,6 +382,60 @@ test('a later Edit of a file Bash created keeps its null baseline', async ($, on
   const entry = session(w).files['c.txt']
   expect(entry.baseline).toBe(null)
   expect(entry.events).toHaveLength(2)
+})
+
+const PYTHON = "python3 - <<'EOF'\nopen('a.txt', 'w').write('ONE')\nEOF"
+
+test('a tracked file an inline Python script rewrites is recorded with its index baseline', async ($, on) => {
+  const w = world(on)
+  w.scripts.set(PYTHON, { 'a.txt': 'ONE\n' })
+  await $.session.start({ cwd: TOP, surface: 'terminal', isInteractive: true })
+  await $.turn.start(start('t1'))
+  await $.tool.call(bash(PYTHON))
+
+  const s = session(w)
+  expect(Object.keys(s.files)).toEqual(['a.txt'])
+  expect(s.files['a.txt'].baseline).toBe('sha-one')
+  expect(s.files['a.txt'].firstTurnId).toBe('t1')
+  expect(s.files['a.txt'].events[0].tool).toBe('Bash')
+})
+
+test('a file already modified before the Python script keeps its pre-script content as baseline', async ($, on) => {
+  const w = world(on)
+  w.files.set(`${TOP}/a.txt`, 'mine\n')
+  w.files.set(`${TOP}/b.txt`, 'also mine\n')
+  w.scripts.set(PYTHON, { 'a.txt': 'ONE\n' })
+  await $.session.start({ cwd: TOP, surface: 'terminal', isInteractive: true })
+  await $.turn.start(start('t1'))
+  await $.tool.call(bash(PYTHON))
+
+  // b.txt was modified, but not by the script.
+  const s = session(w)
+  expect(Object.keys(s.files)).toEqual(['a.txt'])
+  expect(s.files['a.txt'].baseline).toBe('sha-mine')
+})
+
+test('a Python script on a file already in review keeps the first photo', async ($, on) => {
+  const w = world(on)
+  w.scripts.set(PYTHON, { 'a.txt': 'uno\n' })
+  await $.session.start({ cwd: TOP, surface: 'terminal', isInteractive: true })
+  await $.turn.start(start('t1'))
+  await $.tool.call(edit('a.txt', 'one', 'ONE'))
+  await $.tool.call(bash(PYTHON))
+
+  const entry = session(w).files['a.txt']
+  expect(entry.baseline).toBe('sha-one')
+  expect(entry.events.map((ev: { tool: string }) => ev.tool)).toEqual(['Edit', 'Bash'])
+})
+
+test('other Bash commands that change tracked files are still not recorded', async ($, on) => {
+  const w = world(on)
+  w.scripts.set("sed -i '' s/one/ONE/ a.txt", { 'a.txt': 'ONE\n' })
+  await $.session.start({ cwd: TOP, surface: 'terminal', isInteractive: true })
+  await $.turn.start(start('t1'))
+  await $.tool.call(bash("sed -i '' s/one/ONE/ a.txt"))
+
+  expect(session(w)).toBe(undefined)
 })
 
 test('Esc drops the files Bash created in the aborted turn', async ($, on) => {

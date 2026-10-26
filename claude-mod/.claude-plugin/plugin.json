@@ -1,7 +1,7 @@
 {
   "name": "nvim-inline-review",
-  "version": "0.2.0",
-  "description": "Snapshots each file before Claude's first Edit/Write/NotebookEdit, and records the new files Bash creates, so claude-inline-review.nvim can review the changes hunk by hunk.",
+  "version": "0.3.0",
+  "description": "Snapshots each file before Claude's first Edit/Write/NotebookEdit, and records the new files Bash creates and the tracked files an inline Python heredoc script changes, so claude-inline-review.nvim can review the changes hunk by hunk.",
   "author": {
     "name": "Rohit Rao"
   },

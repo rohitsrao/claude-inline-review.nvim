@@ -264,21 +264,70 @@ const GENERATED_HEAD_LINES = 10
 // Lockfiles package managers write, most without a generated header.
 const LOCKFILE = /(^|\/)([^/]+\.lock|[^/]+-lock\.(json|yaml)|npm-shrinkwrap\.json|go\.sum)$/
 
-// The untracked files git sees (gitignored ones left out), relative to the
-// repo root.
-async function untracked($: EngineInterface, r: Repo): Promise<Set<string>> {
+// An inline Python script fed through a heredoc (python3 - <<'EOF'). It can
+// rewrite any tracked file, so after it runs git tells which ones changed.
+const PYTHON_HEREDOC = /\bpython3?\s+-\s*<</
+
+// A file Bash changed, with its content from just before (null: created).
+type Change = { rel: string; baseline: string | null }
+
+// The NUL-separated paths a git listing prints, relative to the repo root.
+async function gitList($: EngineInterface, r: Repo, args: string[]): Promise<Set<string>> {
+  const what = `git ${args[0]}`
   const ran = await $.process
-    .run(['git', 'ls-files', '--others', '--exclude-standard', '-z'], { cwd: r.top, timeoutMs: GIT_TIMEOUT_MS })
+    .run(['git', ...args, '-z'], { cwd: r.top, timeoutMs: GIT_TIMEOUT_MS })
     .catch(err => {
-      throw new RecordError(`git ls-files: ${messageOf(err)}`)
+      throw new RecordError(`${what}: ${messageOf(err)}`)
     })
 
   if (ran.exitCode !== 0) {
-    throw new RecordError(`git ls-files exited ${ran.exitCode}: ${ran.stderr.trim()}`)
+    throw new RecordError(`${what} exited ${ran.exitCode}: ${ran.stderr.trim()}`)
   }
-  if (ran.isStdoutTruncated) throw new RecordError('git ls-files listed too many untracked files')
+  if (ran.isStdoutTruncated) throw new RecordError(`${what} listed too many files`)
 
   return new Set(ran.stdout.split('\0').filter(path => path !== ''))
+}
+
+// The untracked files git sees (gitignored ones left out).
+function untracked($: EngineInterface, r: Repo): Promise<Set<string>> {
+  return gitList($, r, ['ls-files', '--others', '--exclude-standard'])
+}
+
+// The tracked files whose working copy differs from the index, each with
+// its blob SHA (written, so it can be recovered); null: deleted.
+async function photographModified($: EngineInterface, r: Repo): Promise<Map<string, string | null>> {
+  const photos = new Map<string, string | null>()
+
+  for (const rel of await gitList($, r, ['diff', '--name-only'])) {
+    photos.set(rel, await hashFile($, r, rel, true))
+  }
+
+  return photos
+}
+
+// The tracked files a command changed, each with its content from just
+// before: the photo for a file already modified, the index blob for the rest
+// (their working copy matched the index).
+async function changedTracked(
+  $: EngineInterface,
+  r: Repo,
+  before: Map<string, string | null>,
+): Promise<Change[]> {
+  const after = await gitList($, r, ['diff', '--name-only'])
+  const changes: Change[] = []
+
+  for (const rel of new Set([...before.keys(), ...after])) {
+    const photo = before.get(rel)
+
+    if (photo === undefined) {
+      const baseline = await run($, ['git', 'rev-parse', `:${rel}`], `git rev-parse on ${rel} failed`)
+      changes.push({ rel, baseline })
+    } else if ((await hashFile($, r, rel, false)) !== photo) {
+      changes.push({ rel, baseline: photo })
+    }
+  }
+
+  return changes
 }
 
 // A file Bash created that is worth reviewing: text, not empty, and neither a
@@ -295,17 +344,14 @@ async function isReviewable($: EngineInterface, r: Repo, rel: string): Promise<b
   return !GENERATED_MARK.test(head)
 }
 
-// After Bash ran: records each file it created as new (null baseline), the
-// way a Write of a new file is recorded.
-async function recordCreated(
+// After Bash ran: logs a change to each file already in review, and records
+// the rest with their baseline, the way a first Edit or Write is recorded.
+async function recordChanged(
   $: EngineInterface,
   r: Repo,
-  created: string[],
+  changes: Change[],
 ): Promise<void> {
   const existing = await readSession($, r)
-  const fresh = created.filter(rel => existing?.files[rel] === undefined)
-  if (fresh.length === 0) return
-
   const session: Session = existing ?? {
     reviewId: crypto.randomUUID(),
     modVersion,
@@ -314,14 +360,13 @@ async function recordCreated(
     turnId: mainTurnId ?? null,
     files: {},
   }
-  const at = Date.now()
+  const event: FileEvent = { tool: 'Bash', at: Date.now(), turnId: mainTurnId ?? null }
 
-  for (const rel of fresh) {
-    session.files[rel] = {
-      baseline: null,
-      firstTurnId: mainTurnId ?? null,
-      events: [{ tool: 'Bash', at, turnId: mainTurnId ?? null }],
-    }
+  for (const { rel, baseline } of changes) {
+    const known = session.files[rel]
+
+    if (known !== undefined) known.events.push(event)
+    else session.files[rel] = { baseline, firstTurnId: mainTurnId ?? null, events: [event] }
   }
   session.status = 'working'
   await writeSession($, r, session)
@@ -375,11 +420,12 @@ async function recordCall<E extends FileToolCall, R extends { deny?: string; isE
   return ran
 }
 
-const BASH_FILES = 'the files Bash creates'
+const BASH_FILES = 'the files Bash creates or changes'
 
 // The hook for Bash: the untracked files before and after the command; the
-// new ones Claude wrote by hand go into review.
-async function recordBash<E extends FileToolCall, R extends { deny?: string }>(
+// new ones Claude wrote by hand go into review. An inline Python script also
+// puts the tracked files it changed into review.
+async function recordBash<E extends FileToolCall & { command: string }, R extends { deny?: string }>(
   $: EngineInterface,
   e: E,
   next: (e: E) => Promise<R>,
@@ -390,9 +436,12 @@ async function recordBash<E extends FileToolCall, R extends { deny?: string }>(
   const key = e.tool_use_id ?? crypto.randomUUID()
   pending.set(key, { rel: BASH_FILES })
 
+  const isPythonScript = PYTHON_HEREDOC.test(e.command)
   let before: Set<string>
+  let modified = new Map<string, string | null>()
   try {
     before = await untracked($, r)
+    if (isPythonScript) modified = await photographModified($, r)
   } catch (err) {
     pending.delete(key)
     const reason = `${messageOf(err)} before Bash`
@@ -406,11 +455,12 @@ async function recordBash<E extends FileToolCall, R extends { deny?: string }>(
   try {
     if (ran.deny === undefined) {
       const after = await untracked($, r)
-      const created: string[] = []
+      const changes: Change[] = []
       for (const rel of after) {
-        if (!before.has(rel) && (await isReviewable($, r, rel))) created.push(rel)
+        if (!before.has(rel) && (await isReviewable($, r, rel))) changes.push({ rel, baseline: null })
       }
-      if (created.length > 0) await serial(() => recordCreated($, r, created))
+      if (isPythonScript) changes.push(...(await changedTracked($, r, modified)))
+      if (changes.length > 0) await serial(() => recordChanged($, r, changes))
     }
   } catch (err) {
     await stopClaude($, `${messageOf(err)} after Bash`, BASH_FILES)
