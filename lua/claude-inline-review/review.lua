@@ -1,6 +1,7 @@
 -- review.lua: the review itself. It follows your cursor: accept and reject act
 -- on the hunk under (or next below) the cursor in whatever recorded file you
--- are in, and ]h / [h and auto-advance cross into the next file.
+-- are in. Accept leaves the cursor where it is; ]h / [h, <leader>rn and the
+-- auto-advance after a reject cross into the next file.
 local config = require("claude-inline-review.config")
 local git = require("claude-inline-review.git")
 local hunks = require("claude-inline-review.hunks")
@@ -231,6 +232,7 @@ end
 local BUF_KEYS = {
   { "next_hunk", function() M.next_hunk() end, "Next Claude hunk" },
   { "prev_hunk", function() M.prev_hunk() end, "Previous Claude hunk" },
+  { "next_file", function() M.next_file() end, "Next file in Claude review" },
   { "accept", function() M.accept() end, "Accept Claude hunk" },
   { "reject", function() M.reject() end, "Reject Claude hunk" },
   { "accept_file", function() M.accept_file() end, "Accept Claude's changes to this file" },
@@ -337,20 +339,22 @@ local function open_file(rel, which)
   M.render(buf)
 end
 
--- The next file with hunks left after `rel` (wrapping round, `rel` itself last).
+-- The next file with hunks left after `rel` in review order (wrapping round,
+-- `rel` itself last). `rel` may have no hunks left, e.g. after an accept.
 local function next_pending(rel, step)
-  local pending = M.refresh_counts()
-  if #pending == 0 then return nil end
+  M.refresh_counts()
+  local files = M.files()
+  local n = #files
 
-  local index = 0
-  for i, path in ipairs(pending) do
+  local index = step > 0 and 0 or n + 1
+  for i, path in ipairs(files) do
     if path == rel then index = i end
   end
-  if index == 0 then
-    return step > 0 and pending[1] or pending[#pending]
+  for k = 1, n do
+    local path = files[((index - 1 + k * step) % n) + 1]
+    if S.counts[abs(path)] then return path end
   end
-  local n = #pending
-  return pending[((index - 1 + step) % n) + 1]
+  return nil
 end
 
 local function current_rel()
@@ -383,7 +387,18 @@ function M.prev_hunk()
   if target then open_file(target, "last") end
 end
 
--- After a decision: the next hunk at or below `row`, else the next file,
+function M.next_file()
+  local rel = current_rel()
+  if not rel then return end
+  local target = next_pending(rel, 1)
+  if target then
+    open_file(target, "first")
+  else
+    M.maybe_finish()
+  end
+end
+
+-- After a reject: the next hunk at or below `row`, else the next file,
 -- else the review is finished.
 local function advance(buf, rel, row)
   M.render(buf)
@@ -439,15 +454,24 @@ local function target()
   return rel, buf, list[index], old, new
 end
 
+-- After an accept the cursor stays put, so you can read the code you kept.
+-- When the file has nothing left, says how to move on (or finishes).
+local function after_accept(buf, rel)
+  M.render(buf)
+  if #M.hunks_of(rel) > 0 or M.maybe_finish() then return end
+  local key = config.options.keymaps.next_file
+  notify(("%s reviewed%s"):format(rel, key and (" — " .. key .. " for the next file") or ""))
+end
+
 -- Accept moves the baseline forward: the buffer is not touched and nothing
 -- is staged.
 function M.accept()
   local rel, buf, h, old, new = target()
   if not rel then return end
-  if not h then return advance(buf, rel, 1) end
+  if not h then return after_accept(buf, rel) end
 
   set_baseline(rel, hunks.accept(old, new, h))
-  advance(buf, rel, (hunks.rows(h)))
+  after_accept(buf, rel)
 end
 
 -- Reject moves the file backward: the baseline's lines go back into the
@@ -475,7 +499,7 @@ function M.accept_file()
   local rel, buf, _, _, new = target()
   if not rel then return end
   set_baseline(rel, new)
-  advance(buf, rel, math.huge)
+  after_accept(buf, rel)
 end
 
 function M.reject_file()

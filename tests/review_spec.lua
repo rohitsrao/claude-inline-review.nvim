@@ -93,7 +93,8 @@ describe("review", function()
 
     review.accept()
     assert.are.equal("one\nTWO\nthree\nfour\nFIVE\n", read_file(r.top .. "/a.txt"))
-    assert.are.equal(5, vim.api.nvim_win_get_cursor(0)[1])
+    -- The cursor stays on the accepted code.
+    assert.are.equal(2, vim.api.nvim_win_get_cursor(0)[1])
     assert.are.equal(1, #review.hunks_of("a.txt"))
 
     review.reject()
@@ -102,6 +103,22 @@ describe("review", function()
     assert.are.equal("", sh(r.top, "git", "diff", "--cached", "--name-only"))
     -- Every hunk decided: the whole record is gone.
     assert.is_nil(vim.uv.fs_stat(store.dir(r.git_dir)))
+  end)
+
+  it("accepting a whole file stays there; next_file moves on", function()
+    local r = repo()
+    r.claude("a.txt", "one\nTWO\nthree\nfour\nfive\n", "t1")
+    r.claude("b.txt", "bee\n", "t1")
+    r.session("ready", "t1")
+    review.on_record_change()
+    review.start()
+
+    review.accept_file()
+    assert.are.equal(r.top .. "/a.txt", vim.api.nvim_buf_get_name(0))
+    assert.are.equal(2, vim.api.nvim_win_get_cursor(0)[1])
+
+    review.next_file()
+    assert.are.equal(r.top .. "/b.txt", vim.api.nvim_buf_get_name(0))
   end)
 
   it("u after a reject brings the hunk back", function()

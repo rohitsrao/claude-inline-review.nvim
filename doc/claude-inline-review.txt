@@ -21,6 +21,7 @@ Options (defaults shown; any key set to false is left unmapped): >lua
     require("claude-inline-review").setup({
       keymaps = {
         start = "<leader>rr", next_hunk = "]h", prev_hunk = "[h",
+        next_file = "<leader>rn",
         accept = "<leader>ra", reject = "<leader>rx",
         accept_file = "<leader>rA", reject_file = "<leader>rX",
         list = "<leader>rl", quit = "<leader>rq",
@@ -43,6 +44,7 @@ COMMANDS                                         *:ClaudeInlineReview*
 REVIEWING                                        *claude-inline-review-keys*
 
 Accept keeps Claude's lines and moves the snapshot forward; nothing is staged.
+The cursor stays put after an accept; |]h| or <leader>rn (next_file) moves on.
 Reject restores the old lines and saves the file; |u| undoes it. A file Claude
 created that a reject leaves empty is deleted; its buffer stays open, so |u|
 then |:w| brings it back.

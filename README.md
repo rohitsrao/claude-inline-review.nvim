@@ -53,12 +53,13 @@ When Claude's turn ends, you get a notification: `Claude changed 4 files (11 hun
 |---|---|
 | `<leader>rr` | start / resume the review |
 | `]h` / `[h` | next / previous hunk (crosses files) |
-| `<leader>ra` / `<leader>rx` | accept / reject the hunk under the cursor, then move on |
-| `<leader>rA` / `<leader>rX` | accept / reject the whole file |
+| `<leader>rn` | next file with hunks left |
+| `<leader>ra` / `<leader>rx` | accept the hunk under the cursor and stay on it / reject it and move on |
+| `<leader>rA` / `<leader>rX` | accept the whole file and stay / reject it and move on |
 | `<leader>rl` | all remaining hunks in quickfix |
 | `<leader>rq` | end the review (keeps progress) |
 
-- **Accept** keeps Claude's code as ordinary code you can keep editing. Your own later edits to it show up as new hunks.
+- **Accept** keeps Claude's code as ordinary code you can keep editing. The cursor stays where it is so you can read what you kept; move on with `]h` or `<leader>rn`. Your own later edits to it show up as new hunks.
 - **Reject** puts the old lines back and saves the file. Plain `u` undoes a reject, and a whole-file reject is one undo step.
 - **The empty-file rule:** if rejecting leaves a file that Claude created empty, the file is deleted. Its buffer stays open, so `u` then `:w` brings it back.
 - **The review follows your cursor.** Opening a file from nvim-tree, Telescope or `:bnext` continues the review there.

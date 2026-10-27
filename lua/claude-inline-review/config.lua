@@ -7,6 +7,7 @@ M.defaults = {
     start = "<leader>rr",       -- start / resume the review (global)
     next_hunk = "]h",           -- the rest are buffer-local during a review
     prev_hunk = "[h",
+    next_file = "<leader>rn",
     accept = "<leader>ra",
     reject = "<leader>rx",
     accept_file = "<leader>rA",
